@@ -141,6 +141,9 @@ tigris::tracts(state = "MA", county = "025", cb = TRUE, year = 2019) %>%
 
 # Census block data is currently only available through tidycensus from the 2010 decennial census. Further, this data is not complete, since the Census bureau is still double checking numbers for many variables. So, I gathered data from the block group level instead.
 
+
+## Census Block Group Polygons
+
 # Download block group boundaries!
 tigris::block_groups(state = "MA", county = "025", year = 2020) %>%
   st_as_sf() %>%
@@ -149,11 +152,13 @@ tigris::block_groups(state = "MA", county = "025", year = 2020) %>%
   # Write to file
   st_write("shapes/block_groups.geojson", delete_dsn = TRUE)
 
+# Census Block Polygonns
+
 # Download block boundaries.
 tigris::blocks(state = "MA", county = "025", year = 2020) %>%
   st_as_sf() %>%
   st_transform(crs = geo$wgs$proj) %>%
-  select(geoid = GEOID, area_land = ALAND, geometry) %>%
+  select(geoid = GEOID20, area_land = ALAND20, geometry) %>%
   # Write to file
   st_write("shapes/blocks.geojson", delete_dsn = TRUE)
 ```

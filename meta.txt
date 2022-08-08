@@ -1,0 +1,5 @@
+list(wgs = list(name = "EPSG:4326 (WGS 84) projection", proj = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs", 
+    url = "https://spatialreference.org/ref/epsg/wgs-84/"), aea = list(
+    name = "North American Albers Equal Area Conic Projection", 
+    proj = "+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +datum=NAD83 +units=m +no_defs", 
+    url = "https://spatialreference.org/ref/esri/north-america-albers-equal-area-conic/"))

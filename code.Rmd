@@ -1,0 +1,404 @@
+---
+title: "Replication Code"
+subtitle: "for manuscript<br>Trust but Verify: Validating New Measures for Mapping Social Infrastructure in Cities"
+author: "Code by Timothy Fraser"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::downcute:
+    self_contained: true
+    default_style: "light"
+    downcute_theme: "default"
+---
+
+```{r setup, include=FALSE}
+## Global options
+knitr::opts_chunk$set(cache = FALSE, message = FALSE, warning = FALSE)
+library(rmdformats)
+library(tidyverse)
+```
+
+# 0. Setup
+
+## 0.1 Packages
+
+To get started, please install these packages!
+
+```{r install_packages}
+# Gather a vector of packages currently installed
+mypackages <- installed.packages()[,1]
+
+# Get a list of all packages needed
+needed <- c(
+  # Data wrangling
+  "tidyverse", 
+  # Modeling
+  "gtools", "car", "lmtest",
+  # Visualization
+  "viridis","ggpubr", 
+  # Mapping
+  "sf", "ggspatial", "ggtext", 
+  # Census Data
+  "tigris", "tidycensus", "censusapi",
+  # Images and Icons
+  "magick", "fontawesome", "rsvg"
+)
+
+# Show me which needed packages have 'not yet' been installed
+notyet <- needed[!needed %in% mypackages]
+
+# If there are any packages that have not yet been installed,
+if(length(notyet) > 0){
+  # Please install them!
+  install.packages(notyet)
+  print("New packages installed. You're all set!")
+}else{
+  print("No new packages needed. You're all set!")
+}
+```
+
+## 0.2 Load Packages
+
+Next, please load main packages for data wrangling. Other packages will be loaded as needed below.
+
+```{r load_packages}
+library(tidyverse)
+library(sf)
+library(viridis)
+```
+
+## 0.3 Make Metadata
+
+This analysis will use several GIS projections. We're going to record their details in a list, so we can quickly summon them at any time!
+
+```{r}
+list(
+  # WGS projection details
+  "wgs" = list(
+      "name" = "EPSG:4326 (WGS 84) projection",
+      "proj" = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs",
+      "url" = "https://spatialreference.org/ref/epsg/wgs-84/"),
+  # Albers Equal Area Conic projection details  
+  "aea" = list(
+    "name" = "North American Albers Equal Area Conic Projection",
+    "proj" = "+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +datum=NAD83 +units=m +no_defs",
+    "url" = "https://spatialreference.org/ref/esri/north-america-albers-equal-area-conic/" )
+) %>% 
+  # We'll use dput to 'put' this nested list into a text file,
+  # and then we can retrieve it using dget()
+  dput(file = "meta.txt")
+
+# For example
+dget("meta.txt")
+```
+This allows us to quickly access projections, like so:
+
+```{r}
+dget("meta.txt")$wgs$proj
+```
+<br>
+<br>
+
+# 1. Polygons
+
+In this part of the script, we're going to compile all necessary pieces of data for later analysis.
+
+```{r, message = FALSE, warning = FALSE,  eval = FALSE}
+# Get our projections file
+geo <- dget("meta.txt")
+
+## County Polygons
+
+# Download the polygons for Suffolk County, MA
+tigris::counties(cb = TRUE, year = 2019) %>%
+  st_as_sf() %>%
+  # Set all column names to lowercase
+  magrittr::set_colnames(value = names(.) %>% tolower()) %>%
+  # Set a basic WGS projection, just in case
+  st_transform(crs = geo$wgs$proj) %>%
+  # Filter to Suffolk Count in Massachusetts
+  filter(statefp == "25", name %in% c("Suffolk")) %>%
+  # Zoom into just these variables
+  select(name, geoid, area_land = aland, geometry) %>%
+  # Write to file
+  st_write("shapes/county.geojson", delete_dsn = TRUE)
+
+## Census Tract Polygons
+
+# Download the polygons for Suffolk County census tracts
+tigris::tracts(state = "MA", county = "025", cb = TRUE, year = 2019) %>%
+  st_as_sf() %>%
+  # Set all column names to lowercase
+  magrittr::set_colnames(value = names(.) %>% tolower()) %>%
+  # Set a basic WGS projection, just in case
+  st_transform(crs = geo$wgs$proj) %>%
+  # combile! 
+  #bind_rows() %>%
+  # Keep only a subset of variables
+  select(geoid, area_land = aland, geometry) %>%
+  # Write to file
+  st_write("shapes/tracts.geojson", delete_dsn = TRUE)
+
+
+# Census block data is currently only available through tidycensus from the 2010 decennial census. Further, this data is not complete, since the Census bureau is still double checking numbers for many variables. So, I gathered data from the block group level instead.
+
+# Download block group boundaries!
+tigris::block_groups(state = "MA", county = "025", year = 2020) %>%
+  st_as_sf() %>%
+  st_transform(crs = geo$wgs$proj) %>%
+  select(geoid = GEOID, area_land = ALAND, geometry) %>%
+  # Write to file
+  st_write("shapes/block_groups.geojson", delete_dsn = TRUE)
+
+# Download block boundaries.
+tigris::blocks(state = "MA", county = "025", year = 2020) %>%
+  st_as_sf() %>%
+  st_transform(crs = geo$wgs$proj) %>%
+  select(geoid = GEOID, area_land = ALAND, geometry) %>%
+  # Write to file
+  st_write("shapes/blocks.geojson", delete_dsn = TRUE)
+```
+
+## Census Tract Data
+
+```{r, message = FALSE, warning = FALSE,  eval = FALSE}
+library(tidycensus)
+# Load your Census API key here
+census_api_key("My_API_key_goes_here")
+```
+
+```{r, message = FALSE, warning = FALSE,  eval = FALSE}
+library(tidycensus)
+library(censusapi)
+
+# Explore variables available here
+# vars <- load_variables(year = 2018, dataset = "acs5", cache = TRUE) %>%
+#     mutate_at(vars(label, concept), funs(tolower(.)))
+# vars %>% head()
+
+# Repeat for tracts
+get_acs(
+  year = 2019, survey = "acs5",
+  state = "MA", geography = "tract",
+  variables = c(
+    "B01003_001E", # Total Population
+    # Age
+    "B01001_020", "B01001_021",
+    "B01001_022", "B01001_023",
+    "B01001_024", "B01001_025",
+    "B01001_044", "B01001_045",
+    "B01001_046", "B01001_047",
+    "B01001_048", "B01001_049",
+    "B01001_026", # Gender
+    # Race/Ethnicity
+    "B02001_002E", "B02001_003E", 
+    "B02001_004E", "B02001_005E", #
+    "B02001_006E", "B03001_003E", 
+    # Socioeconomics
+    "B19083_001E", "B06009_004", 
+    "B23025_003E", "B23025_005E", 
+    "B19013_001", "B25105_001", 
+    "B08128_006E", "B08128_007E",
+    "B08128_008E")) %>%
+  select(geoid = GEOID, variable, estimate) %>%
+  # Now recode each of these variables with names
+  mutate(variable = variable %>% dplyr::recode(
+    "B01003_001" = "pop", # Total Population
+    # Age
+    "B01001_020" = "pop_age_65_66_male",
+    "B01001_021" = "pop_age_67_69_male",
+    "B01001_022" = "pop_age_70_74_male",
+    "B01001_023" = "pop_age_75_79_male",
+    "B01001_024" = "pop_age_80_84_male",
+    "B01001_025" = "pop_age_85_over_male",
+    
+    "B01001_044" = "pop_age_65_66_female",
+    "B01001_045" = "pop_age_67_69_female",
+    "B01001_046" = "pop_age_70_74_female",
+    "B01001_047" = "pop_age_75_79_female",
+    "B01001_048" = "pop_age_80_84_female",
+    "B01001_049" = "pop_age_85_over_female",
+    
+    "B01001_026" = "pop_women", # Gender
+    "B02001_002" = "pop_white",
+    "B02001_003" = "pop_black", # Estimate!!Total!!Black or African American alone
+    "B02001_004" = "pop_natam", #Estimate!!Total!!American Indian andAlaska Native alone
+    "B02001_005" = "pop_asian", #Estimate!!Total!!Asian alone
+    "B02001_006" = "pop_pacific", #Estimate!!Total!!Native Hawaiian and Other Pacific Islander alone
+    "B03001_003" = "pop_hisplat", # Hispanic or Latino
+    "B06009_004" = "pop_some_college",
+    "B19083_001" = "income_inequality", #Income inequality: Estimate!!Gini Index)
+    
+    "B23025_003" = "pop_labor_force", # Estimate!!Total!!In labor force!!Civilian labor force
+    "B23025_005" = "pop_unemployed", #Estimate!!Total!!In labor f orce!!Civilian labor force!!Unemployed
+    
+    "B19013_001" = "median_income", #Estimate!!Median Household income (dollars)!
+    "B25105_001" = "median_monthly_housing_cost",
+    "B08128_006" = "employees_muni", #Estimate!!Total!!Local government workers
+    "B08128_007" = "employees_state", #Estimate!!Total!!State government workers
+    "B08128_008" = "employees_fed", #Estimate!!Total!!Federal government workers
+  )) %>%
+  # Pivot into a wide matrix, where each variable is a column
+  pivot_wider(id_cols = geoid,
+              names_from = variable,
+              values_from = estimate) %>%
+  # Tally up population in this age category
+  mutate(pop_age_65_plus = pop_age_65_66_male + pop_age_67_69_male +
+           pop_age_70_74_male + pop_age_75_79_male +
+           pop_age_80_84_male + pop_age_85_over_male +
+           pop_age_65_66_female + pop_age_67_69_female +
+           pop_age_70_74_female + pop_age_75_79_female +
+           pop_age_80_84_female + pop_age_85_over_female) %>%
+  # % percentage of population
+  mutate_at(
+    vars(
+      pop_age_65_plus, pop_women,
+      pop_white, pop_black, pop_natam,
+      pop_asian, pop_pacific, pop_hisplat,
+      pop_some_college,
+      employees_muni, employees_state, employees_fed),
+    # Normalize as a percent
+    funs(. / pop)) %>%
+  # Calculate percentage of residents unemployed
+  mutate(pop_unemployed = pop_unemployed / pop_labor_force) %>%
+  # Get age groups
+  select(-c(pop_age_65_66_male, pop_age_67_69_male,
+            pop_age_70_74_male, pop_age_75_79_male,
+            pop_age_80_84_male, pop_age_85_over_male,
+            pop_age_65_66_female, pop_age_67_69_female,
+            pop_age_70_74_female, pop_age_75_79_female,
+            pop_age_80_84_female, pop_age_85_over_female)) %>%
+  # Filter into just Suffolk County
+  filter(str_sub(geoid, 1, 5) == "25025") %>%
+  # and save
+  write_csv("tracts_census.csv")
+```
+
+## Tracts in Boston
+
+```{r, eval = FALSE}
+# Load in census tract level demographics from 2019
+read_sf("tracts.kml") %>%
+  select(-c(Name:icon)) %>%
+  left_join(by = "geoid", 
+            y = read_csv("tracts_census.csv", 
+                         col_types = list(geoid = col_character(),
+                                          col_double()))) %>%
+  st_transform(crs = aea) %>%
+  # Remove Chelsea, Revere, and Winthrop,
+  # Which are cities that border Boston,
+  # also in Suffolk county
+  filter(area_land > 0) %>%
+  filter(!str_sub(geoid, 6,7) %in% c(15:18)) %>%
+  # Save these tracts simply so you don't need to go get them again
+  saveRDS("tracts_boston.rds")
+```
+
+
+## Census Block/Block Group Data
+
+
+
+Download block group data!
+
+```{r, message = FALSE, warning = FALSE,  eval = FALSE}
+get_acs(
+  geography = "block group",
+  year = 2019, state = "MA", county = "025",
+  variables = c(
+    "B01003_001E", # Total Population
+    # Age
+    "B01001_020", "B01001_021",
+    "B01001_022", "B01001_023",
+    "B01001_024", "B01001_025",
+    "B01001_044", "B01001_045",
+    "B01001_046", "B01001_047",
+    "B01001_048", "B01001_049",
+    "B01001_026", # Gender
+    # Race/Ethnicity
+    "B02001_002E", "B02001_003E", 
+    "B02001_004E", "B02001_005E", #
+    "B02001_006E", "B03001_003E", 
+    # Socioeconomics
+    "B19083_001E", "B06009_004", 
+    "B23025_003E", "B23025_005E", 
+    "B19013_001", "B25105_001", 
+    "B08128_006E", "B08128_007E",
+    "B08128_008E")) %>%
+  select(geoid = GEOID, variable, estimate) %>%
+  # Now recode each of these variables with names
+  mutate(variable = variable %>% dplyr::recode(
+    "B01003_001" = "pop", # Total Population
+    # Age
+    "B01001_020" = "pop_age_65_66_male",
+    "B01001_021" = "pop_age_67_69_male",
+    "B01001_022" = "pop_age_70_74_male",
+    "B01001_023" = "pop_age_75_79_male",
+    "B01001_024" = "pop_age_80_84_male",
+    "B01001_025" = "pop_age_85_over_male",
+    
+    "B01001_044" = "pop_age_65_66_female",
+    "B01001_045" = "pop_age_67_69_female",
+    "B01001_046" = "pop_age_70_74_female",
+    "B01001_047" = "pop_age_75_79_female",
+    "B01001_048" = "pop_age_80_84_female",
+    "B01001_049" = "pop_age_85_over_female",
+    
+    "B01001_026" = "pop_women", # Gender
+    "B02001_002" = "pop_white",
+    "B02001_003" = "pop_black", # Estimate!!Total!!Black or African American alone
+    "B02001_004" = "pop_natam", #Estimate!!Total!!American Indian andAlaska Native alone
+    "B02001_005" = "pop_asian", #Estimate!!Total!!Asian alone
+    "B02001_006" = "pop_pacific", #Estimate!!Total!!Native Hawaiian and Other Pacific Islander alone
+    "B03001_003" = "pop_hisplat", # Hispanic or Latino
+    "B06009_004" = "pop_some_college",
+    "B19083_001" = "income_inequality", #Income inequality: Estimate!!Gini Index)
+    
+    "B23025_003" = "pop_labor_force", # Estimate!!Total!!In labor force!!Civilian labor force
+    "B23025_005" = "pop_unemployed", #Estimate!!Total!!In labor f orce!!Civilian labor force!!Unemployed
+    
+    "B19013_001" = "median_income", #Estimate!!Median Household income (dollars)!
+    "B25105_001" = "median_monthly_housing_cost",
+    "B08128_006" = "employees_muni", #Estimate!!Total!!Local government workers
+    "B08128_007" = "employees_state", #Estimate!!Total!!State government workers
+    "B08128_008" = "employees_fed", #Estimate!!Total!!Federal government workers
+  )) %>%
+  # Pivot into a wide matrix, where each variable is a column
+  pivot_wider(id_cols = geoid,
+              names_from = variable,
+              values_from = estimate) %>%
+  # Tally up population in this age category
+  mutate(pop_age_65_plus = pop_age_65_66_male + pop_age_67_69_male +
+           pop_age_70_74_male + pop_age_75_79_male +
+           pop_age_80_84_male + pop_age_85_over_male +
+           pop_age_65_66_female + pop_age_67_69_female +
+           pop_age_70_74_female + pop_age_75_79_female +
+           pop_age_80_84_female + pop_age_85_over_female) %>%
+  # % percentage of population
+  mutate_at(
+    vars(
+      pop_age_65_plus, pop_women,
+      pop_white, pop_black, pop_natam,
+      pop_asian, pop_pacific, pop_hisplat,
+      pop_some_college,
+      employees_muni, employees_state, employees_fed),
+    # Normalize as a percent
+    funs(. / pop)) %>%
+  # Calculate percentage of residents unemployed
+  mutate(pop_unemployed = pop_unemployed / pop_labor_force) %>%
+  # Get age groups
+  select(-c(pop_age_65_66_male, pop_age_67_69_male,
+            pop_age_70_74_male, pop_age_75_79_male,
+            pop_age_80_84_male, pop_age_85_over_male,
+            pop_age_65_66_female, pop_age_67_69_female,
+            pop_age_70_74_female, pop_age_75_79_female,
+            pop_age_80_84_female, pop_age_85_over_female)) %>%
+  # Filter into just Suffolk County
+  filter(str_sub(geoid, 1, 5) == "25025") %>%
+  # and save
+  write_csv("block_groups_census.csv")
+
+
+```
+
+
+

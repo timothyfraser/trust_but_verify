@@ -324,7 +324,7 @@ dataverse::get_dataframe_by_name(
 ```
 
 
-## 1.3 Polygons
+## 1.4 Polygons
 
 In this part of the script, we're going to compile all necessary pieces of data for later analysis.
 
@@ -528,7 +528,7 @@ list(
   validation = c(60, 61, 64, 65, 66, 67, 68, 69, 70, 71, 73, 74, 75, 76, 77,
                  78, 79, 82, 83, 84, 85, 86, 87, 88, 93, 94, 95, 96, 97, 98,
                  99, 106, 107, 108, 109, 110, 111, 123, 124, 125, 126, 127, 128, 
-                 142, 143, 144, 145, 146, 147, 148, 161, 162, 163, 164, 173, 
+                 142, 143, 144, 145, 146, 147, 148, 161, 162, 163, 164, 
                  175, 183, 174),
   # Cells around validation area that are not very comparable to validation area,
   # due to being split by water, etc., thus dubbed "excluded"
@@ -543,7 +543,7 @@ list(
              33, 34, 35, 36, 37, 40, 41, 42, 43, 44, 45, 46, 47, 48,
              49, 51, 52, 53, 54, 55, 56, 57, 58, 59, 90, 91, 92, 103, 
              104, 105, 119, 120, 121, 122, 137, 138, 139, 140, 141, 156, 
-             157, 158, 159, 171, 172, 181, 184, 185, 192, 193, 194, 195, 
+             157, 158, 159, 172, 184, 185, 192, 193, 194, 195, 
              196, 203, 204, 205, 206, 207, 208,  218, 219, 225, 226),
   
   # Cells located within Boston city limits,
@@ -552,7 +552,8 @@ list(
   excluded_boston = c(12, 19, 38, 39, 63, 101, 102, 113, 114, 115, 116, 117, 118, 130, 
                       131, 132, 133, 134, 135, 136, 150, 151, 152, 153, 154, 155, 167, 168,
                       169, 170, 177, 178, 179, 180, 186, 187, 188, 189, 191, 197, 198, 199, 
-                      200, 202, 209, 210, 214, 220, 227, 232, 233, 234),
+                      200, 202, 209, 210, 214, 220, 227, 232, 233, 234,
+                      181, 171,  173),
   
   
   # Cells located outside of Boston
@@ -564,11 +565,11 @@ list(
 ) %>%
   map_dfr(~tibble(cell_id = .), .id = "type") %>%
   write_csv("helper/cell_types.csv")
-#217, 224, 
 ```
 
+## 1.7 Spatially Average to Grid Cell Level
 
-## 1.5 Simply Analytics
+### Block Group Membership Rates (Simply Analytics)
 
 ```{r}
 library(sf)
@@ -629,8 +630,111 @@ read_sf("shapes/fishnet.geojson") %>%
   write_csv("data/covariates/grid_membership_rates.csv")
 ```
 
+### Precinct Voting Rates
 
-## 1.6 Fishnet Grid with Census Tract Data
+First, let's download our precinct data from the Harvard Dataverse!
+
+```{r, eval = FALSE}
+library(tidyverse)
+library(dataverse)
+
+# Let's download from Tim Fraser's Boston voting dataset on Harvard Dataverse...
+# DOI: 10.7910/DVN/MMSBGJ
+
+# Get projections
+meta <- dget("meta.txt")
+
+# Download voting data for 2020 presidential election by precinct in Boston.
+votes <- dataverse::get_dataframe_by_name(
+  dataset = "doi:10.7910/DVN/MMSBGJ", 
+  server = "dataverse.harvard.edu",
+  filename = "boston_votes_data.tab")  %>%
+  # Recode data values
+  mutate(type = type %>% tolower() %>% recode_factor(
+    "biden and harris" = "democrat_percent",
+    "trump and pence" = "republican_percent",
+    "ballots cast" = "turnout_percent")) %>%
+  select(ward_precinct, type, percent) %>%
+  pivot_wider(id_cols = c(ward_precinct), names_from = type, values_from = percent)
+
+# Download Boston precinct polygons, as of 2017
+# Originally sourced from:
+# https://data.boston.gov/dataset/precincts/resource/95d37dea-9dec-4fda-a8a6-c7d9df7adc35
+dataverse::get_dataframe_by_name(
+  dataset = "doi:10.7910/DVN/MMSBGJ", 
+  server = "dataverse.harvard.edu",
+  filename = "boston_precinct_polygons.kml",
+  .f = sf::read_sf) %>%
+  select(ward_precinct = WARD_PRECINCT, geometry) %>%
+  # Join in voting data
+  left_join(by = "ward_precinct", y = votes) %>%
+  # Convert and save
+  st_as_sf(crs = meta$wgs$proj) %>%
+  st_make_valid() %>%
+  st_write("shapes/precincts.geojson", delete_dsn = TRUE)
+
+
+# Aggregate precincts into ward polygons
+read_sf("shapes/precincts.geojson") %>%
+  select(ward_precinct, geometry) %>%
+  mutate(ward = str_sub(ward_precinct, 1,2)) %>%
+  group_by(ward) %>%
+  summarize(geometry = st_union(geometry)) %>%
+  ungroup() %>%
+  st_write("shapes/wards.geojson", delete_dsn = TRUE)  
+
+
+# Finally, let's spatially average voting measures 
+read_sf("shapes/fishnet.geojson") %>%
+  # to the 1 km^2 grid cell size
+  filter(size == 1000) %>%
+  select(cell_id, geometry) %>%
+  st_transform(crs = meta$aea$proj) %>%
+  # Joining precinct data into the grid
+  st_join(read_sf("shapes/precincts.geojson") %>%
+            st_transform(crs = meta$aea$proj)) %>%
+  as_tibble() %>% 
+  # And averaging per grid cell
+  group_by(cell_id) %>%
+  summarize(
+    across(cols = c(democrat_percent, republican_percent, turnout_percent),
+           .fns = ~mean(.x, na.rm = TRUE))) %>%
+  ungroup() %>%
+  select(cell_id, contains("percent")) %>%
+  # Then saving the result to file
+  write_csv("data/covariates/grid_voting_data.csv")
+
+# While, we're at it, 
+# let's gather two more types of data.
+
+
+# First, using the following set of zipcode polygons,
+# Let's get average measures by zipcode.
+read_sf("shapes/zipcodes.geojson") %>% 
+  st_transform(crs = meta$aea$proj) %>%
+  # Joining precinct data into the grids
+  st_join(read_sf("shapes/precincts.geojson") %>%
+            st_transform(crs = meta$aea$proj)) %>%
+  # And averaging per zipcode
+  group_by(geoid) %>%
+  summarize(
+    across(cols = c(democrat_percent, republican_percent, turnout_percent),
+           .fns = ~mean(.x, na.rm = TRUE))) %>%
+  ungroup() %>%
+  # Then saving the result to file
+  write_csv("data/covariates/zipcode_voting_data.csv")
+
+# Second, let's download Polling Places in Boston as Points
+#https://data.boston.gov/dataset/polling-locations/resource/f5b67c80-98a9-4e51-bfa0-ffdb8961d547
+read_sf("https://bostonopendata-boston.opendata.arcgis.com/datasets/f7c6dc9eb6b14463a3dd87451beba13f_5.kml?outSR=%7B%22latestWkid%22%3A2249%2C%22wkid%22%3A102686%7D") %>%
+  select(-c(Name:icon)) %>%
+  st_write("shapes/polls.geojson", delete_dsn = TRUE)
+
+# Clear Data
+rm(list = ls())
+```
+
+### Tract Measures
 
 Finally, we need to spatially average tract data to the census tract level.
 
@@ -638,7 +742,6 @@ Finally, we need to spatially average tract data to the census tract level.
 # Load packages
 library(tidyverse)
 library(sf)
-library(gstat)
 
 # Import metadata (projections)
 meta <- dget("meta.txt")
@@ -660,15 +763,12 @@ tracts <- read_sf("shapes/tracts.geojson") %>%
 
 
 # Import grid cells
-grid <- read_sf("shapes/fishnet.geojson") %>%
+read_sf("shapes/fishnet.geojson") %>%
   # For just 1-km^2 cells
   filter(size == 1000) %>%
   # Transform to Albers equal area conic project
-  st_transform(crs = meta$aea$proj)
-
-
-# Spatially average tract data to grid level
-avg <- grid %>%
+  st_transform(crs = meta$aea$proj) %>%
+  # Spatially average tract data to grid level
   # Join in the census tract data
   st_join(tracts) %>% 
   # Convert to dataframe
@@ -685,29 +785,46 @@ avg <- grid %>%
                      median_income, income_inequality, pop_unemployed,
                      median_monthly_housing_cost, pop_age_65_plus,
                      social_capital, bonding, bridging, linking),
-           .fns = ~mean(.x, na.rm = TRUE)),
-    # Carry forward geometry
-    geometry = unique(geometry)) %>%
+           .fns = ~mean(.x, na.rm = TRUE))) %>%
   ungroup() %>%
+  # Save to file!
+  write_csv("data/covariates/grid_tract_measures.csv")
+```
+## 1.8 Combine Measures
+
+```{r}
+# Load packages
+library(tidyverse)
+library(sf)
+library(gstat)
+
+# Import metadata (projections)
+meta <- dget("meta.txt")
+
+# Import grid cells
+grid <- read_sf("shapes/fishnet.geojson") %>%
+  # For just 1-km^2 cells
+  filter(size == 1000) %>%
   # Join in the milestone labels for each grid cell
   left_join(by = "cell_id", 
             y = read_csv("helper/milestones.csv")) %>%
   # Join in our cell-type classifier
   left_join(by = "cell_id",
             y = read_csv("helper/cell_types.csv")) %>%
+  # Join in our tract measures (+ social capital indices for 10 years 2011 to 2020)
+  left_join(by = "cell_id",
+            y = read_csv("data/covariates/grid_tract_measures.csv")) %>%
   # Join in our block-group org membership rates
   left_join(by = "cell_id",
             y = read_csv("data/covariates/grid_membership_rates.csv")) %>%
- # Convert back into sf
-  st_as_sf(crs = meta$aea$proj) %>%
+  # Join in our precinct voting rates
+  left_join(by = "cell_id",
+            y = read_csv("data/covariates/grid_voting_data.csv")) %>%
+  # Transform to Albers equal area conic project
+  st_transform(crs = meta$aea$proj) %>%
   # Drop Z-axis, which doesn't play well with gstat
-  st_zm(drop = TRUE)
-
-# Get just one year-long slice (pop-density is same in all of them)
-shapes <- avg %>%
-  filter(year == 2020) %>%
-  select(cell_id, pop_density, geometry) %>%
-    # In a few cases, tracts/block groups/blocks 'ostensibly' had no residents, 
+  st_zm(drop = TRUE) %>%
+  # In a few cases, tracts/block groups/blocks 'ostensibly' had no residents, 
   # but they're in Boston! So it's better to treat these as NA 
   # so no population density.
   mutate(pop_density = case_when(
@@ -715,6 +832,10 @@ shapes <- avg %>%
     pop_density == 0 ~ NA_real_,
     TRUE ~ pop_density))
 
+# Get just one year-long slice (pop-density is same in all of them)
+shapes <- grid %>%
+  filter(year == 2020) %>%
+  select(cell_id, pop_density, geometry)
 
 # Some areas of Boston *are* populated, by the census doesn't pick them up. 
 # We'll use spatial interpolation to estimate their 
@@ -736,7 +857,7 @@ gstat::gstat(
   as.data.frame() %>%
   select(cell_id, pop_density_int = cell_id.pred) %>%
   # Join those results into the grid from 2011 to 2020!
-  right_join(by = "cell_id", y = avg) %>%
+  right_join(by = "cell_id", y = grid) %>%
   # Convert back to WGS for easy sharing
   st_as_sf(crs = meta$aea$proj) %>%
   st_transform(crs = meta$wgs$proj) %>%
@@ -757,7 +878,7 @@ rm(list = ls())
 <br>
 <br>
 
-## 1.7 Frequent Mapping Data
+## 1.9 Frequent Mapping Data
 
 Let's also create a simple script we can run at any time to load in the following common data.
 
@@ -835,6 +956,21 @@ rm(list = ls())
 knitr::include_graphics("figures/other/figure_Z1.png", dpi = 100)
 ```
 
+## Figure Z5: Cell IDs Mapped
+
+```{r}
+grid <- read_sf("shapes/grid_covariates.geojson")
+
+g1 <- ggplot() +
+  geom_sf(data = grid, 
+          mapping = aes(fill = type), alpha = 0.75) +
+  geom_sf_text(data = grid,
+               mapping = aes(label = cell_id))  +
+  theme_void() +
+  theme(legend.position = "right") 
+
+ggsave(g1, filename = "figures/other/figure_Z5.png", dpi = 300, width = 8, height = 7.5)
+```
 
 
 ## Figure A5: Map of Cell Types 
@@ -845,18 +981,13 @@ Using a dataset that we make later, let's just grab the cell IDs of the cells we
 # Get basic map data
 source("helper/mapdata.r")
 
-# Create buffers
-points <- grid %>%  
-  mutate(geometry = st_buffer(st_centroid(geometry), dist = 1410/2)) %>% 
-  st_as_sf() 
-
 # Add variable to grid
 grid <- grid %>%
   mutate(type_label = type %>% recode_factor(
-    "validation" = "<b>Validation Cells</b><br>(n = 58)<br>",
-    "boston" = "<b>Boston Cells</b><br>(n = 160)<br>(218 including<br>validation)<br>",
-    "excluded_validation" = "<b>Boston Cells</b><br>(n = 160)<br>(218 including<br>validation)<br>",
-    "excluded_boston" = "<b>Ineligible Cells<br>(n = 58)</b><br>",
+    "validation" = "<b>Validation Cells</b><br>(n = 57)<br>",
+    "boston" = "<b>Boston Cells</b><br>(n = 106)<br>",
+    "excluded_validation" = "<b>Boston Cells</b><br>(n = 106)<br>",
+    "excluded_boston" = "<b>Ineligible Cells<br>(n = 55)</b><br>",
     "outside_of_boston" = "<b>Outside Boston</b><br>(n = 43)<br>(Excluded)"))
 
 library(tidyverse)
@@ -874,26 +1005,75 @@ g1 <- ggplot() +
           color = "black", fill = NA) +
   scale_size_manual(values = c(1, 0.1)) +
   labs(
-    fill = paste("Cells (n = ", nrow(grid), ")\n in Suffolk County", sep = ""),
+    fill = paste("Cells (n = ", nrow(grid), ")<br> in Suffolk County", sep = ""),
     size = "Borders",
-    subtitle = "<b>1 km<sup>2</sup> grid cells for tallying sites</b><br><i>(n = 166 eligible cells in Boston)</i>") +
+    title = expression(paste("1 ", km^2,  " grid cells for tallying sites")),
+    subtitle = "<i>(n = 163 eligible cells in Boston)</i>") +
   guides(color = "none", size = guide_legend(override.aes = list(
     fill = c("white", "grey"))))  +
   ggspatial::annotation_north_arrow(height = unit(0.5, "cm"),
                                     width = unit(0.5, "cm")) +
   ggspatial::annotation_scale(pad_x = unit(3.5, "cm")) +
   theme_void(base_size = 14) +
-  theme(plot.subtitle = element_markdown(size = 14, hjust = 0),
+  theme(plot.title = element_text(face = "bold", size = 15),
+        plot.subtitle = element_markdown(face = "italic", size = 14, hjust = 0),
         legend.text = element_markdown(size = 12),
         legend.title = element_markdown(size = 12),
         legend.position = "right") 
-
 
 # There are 261 cells of 1 square kilometer in Suffolk County
 ggsave(g1, filename = "figures/figure_A5.png", dpi = 500, height = 4, width = 4.5)
 ```
 
+## Figures Z6-Z7: Voting Maps
 
+```{r}
+library(tidyverse)
+library(viridis)
+
+# Load in geographic data
+precincts <- read_sf("shapes/precincts.geojson")
+wards <- read_sf("shapes/wards.geojson")
+
+# Map Votes for Democrats
+g1 <- ggplot() +
+  geom_sf(data = wards, fill = NA, color = "grey", size = 5) +
+  geom_sf(data = precincts,
+          size = 0.2, color = "white",
+          mapping = aes(fill = democrat_percent)) +
+  geom_sf(data = wards, fill = NA, color = "black", size = 0.5) +
+  theme_bw(base_size = 20) +
+  scale_fill_viridis(option = "plasma") +
+  labs(fill = "% Voted\nDemocrat",
+       subtitle = "Boston Precincts",
+       x = "2020 Presidential Election") +
+  theme(legend.position = "right",
+        plot.subtitle = element_text(hjust = 0.5)) +
+  guides(fill = guide_colorsteps(bar.width = 1, bar.height = 10, show.limits = TRUE))
+
+ggsave(g1, filename = "figures/other/figure_Z6.png", dpi = 500, height = 6, width = 9)
+
+# Map Votes for Republicans
+g2 <- ggplot() +
+  geom_sf(data = wards, fill = NA, color = "grey", size = 5) +
+  geom_sf(data = precincts,
+          size = 0.2, color = "white",
+          mapping = aes(fill = turnout_percent)) +
+  geom_sf(data = wards, fill = NA, color = "black", size = 0.5) +
+  theme_bw(base_size = 20) +
+  scale_fill_viridis(option = "plasma") +
+  labs(fill = "% Voter Turnout",
+       subtitle = "Boston Precincts",
+       x = "2020 Presidential Election") +
+  theme(legend.position = "right",
+        plot.subtitle = element_text(hjust = 0.5)) +
+  guides(fill = guide_colorsteps(bar.width = 1, bar.height = 10, show.limits = TRUE))
+
+ggsave(g2, filename = "figures/other/figure_Z7.png", dpi = 500, height = 6, width = 9)
+
+# Clear Data
+rm(list = ls())
+```
 
 # 2. API Test Run
 
@@ -1562,7 +1742,7 @@ rm(list = ls())
 That's surprisingly good. Fewer duplicates than before, it seems.
 This means that just 42 sites appeared across multiple categories.
 
-### Z. Compare Grid Size effect on Rates
+### Figure A3: Map Rates by Grid
 
 We're going to do a cool descriptive sensitivity test. First, we need to tally rates for the two separate grids. Does the size of collection grid used (1km vs 2km) affect the eventual rates, and if so, how much?
 
@@ -1588,9 +1768,7 @@ query2 <- read_sf("query/sites_points.geojson") %>%
 
 # Get 1 km2 tallying grid
 grid <- read_sf("shapes/grid_covariates.geojson") %>%
-  st_transform(crs = meta$aea$proj) %>%
-  # Filter to cells within Boston
-  filter(type != "outside_of_boston")
+  st_transform(crs = meta$aea$proj)
 
 # Write a quick function to tally up a set of points-per-grid cell
 tallyup = function(data){
@@ -1635,7 +1813,7 @@ bind_rows(tally1, tally2, .id = "size") %>%
   left_join(by = "cell_id",
             y = read_sf("shapes/grid_covariates.geojson") %>%
               as_tibble() %>%
-              select(cell_id, neighborhood, 
+              select(cell_id, type, milestone, neighborhood, 
                      pop_women:pop_age_65_plus,
                      social_capital:linking)) %>%
   st_write("shapes/rates_by_collection_grids.geojson", delete_dsn = TRUE)
@@ -1643,17 +1821,48 @@ bind_rows(tally1, tally2, .id = "size") %>%
 rm(list = ls())
 ```
 
-### Figure D1: Map Rates by Grid
+Now, make the corresponding visual for the grid.
 
 ```{r}
 library(tidyverse)
 library(sf)
 library(ggtext)
 
-tally <- read_sf("shapes/rates_by_collection_grids.geojson")
+tally <- read_sf("shapes/rates_by_collection_grids.geojson") %>%
+  filter(!type %in% c("excluded_validation", "excluded_boston", "outside_of_boston"))
 
-mylabels <- as_labeller(c("1" = "<b>1 km<sup>2</sup> Collection Grid<br>1 km<sup>1</sup> Tally Grid</b><br><i>Mean Rate: 0.222</i>",
-                          "2" = "<b>2 km<sup>2</sup> Collection Grid<br>1 km<sup>1</sup> Tally Grid</b><br><i>Mean Rate: 0.165</i>"))
+stats <- tally %>%
+  as_tibble() %>%
+  group_by(size) %>%
+  summarize(mean = mean(rate, na.rm = TRUE) %>% round(2))
+
+# Looks like there is a very minor, not especially significant difference between the two.
+test <- tally %>%
+  as_tibble() %>%
+  with(t.test(ylogged ~ size)) %>%
+  broom::tidy() %>% 
+  mutate_at(vars(estimate1, estimate2), list(~exp(.)))
+
+
+# Calculate their relative ranking
+cor1 <- tally %>%
+  as_tibble() %>%
+  group_by(size) %>%
+  arrange(rate) %>%
+  mutate(rank = 1:n()) %>%
+  ungroup() %>%
+  pivot_wider(id_cols = c(cell_id), names_from = size, values_from = rank) %>%
+  summarize(cor = cor(`1`, `2`))
+
+cor2 <- tally %>%
+  as_tibble() %>%
+  pivot_wider(id_cols = c(cell_id), names_from = size, values_from = rate) %>%
+  summarize(cor = cor(`1`, `2`))
+
+
+mylabels <- as_labeller(c(
+  "1" = paste("<b>1 km<sup>2</sup> Collection Grid<br>1 km<sup>2</sup> Tally Grid</b><br>Mean Rate: ", stats$mean[1]),
+  "2" = paste("<b>2 km<sup>2</sup> Collection Grid<br>1 km<sup>2</sup> Tally Grid</b><br>Mean Rate: ", stats$mean[2])))
 
 # How much do results change when using a 1 km collection grid versus a 2 km tally grid?
 g1 <- ggplot() +
@@ -1663,69 +1872,44 @@ g1 <- ggplot() +
           color = "white") +
   facet_wrap(~size, labeller = mylabels) +
   theme_void(base_size = 14) +
-  theme(plot.subtitle = element_markdown(face = "bold", size = 14, hjust = 0.5),
-        plot.caption = element_markdown(face = "italic", size = 12, hjust = 0),
-        
-        strip.text.x = element_markdown(face = "bold", size = 12, hjust = 0.5),
-        plot.margin = margin(0,0,0,0, "cm"),
-        legend.title = element_markdown(face = "italic", size = 14, hjust = 0)) +
+  theme(
+    plot.caption = element_markdown(face = "italic", size = 12, hjust = 0),
+    strip.text.x = element_markdown(size = 12, hjust = 0.5, 
+                                    colour = "#373737"),
+    plot.margin = margin(0,0,0,0, "cm"),
+legend.title = element_markdown(face = "italic", size = 13, hjust = 0)) +
   viridis::scale_fill_viridis(option = "plasma", direction = -1, begin = 0.2, end = 0.95) +
   labs(fill = "<b>Rates of<br>Places<br>of Worship</b><br><br><i>per 1000<br>residents<br>per km<sup>2</sup></i>")
 
 
 # Analyze the difference of means
-ggsave(g1, filename = "figures/figure_D1.png", dpi = 300, width = 5, height = 3.5)
+ggsave(g1, filename = "figures/figure_A3.png", dpi = 300, width = 5, height = 3.5)
+
+rm(list = ls())
 ```
 
-```{r}
-# Looks like there is a very minor, slightly statistically significant difference between the two.
-tally %>%
-  as_tibble() %>%
-  with(t.test(ylogged ~ type)) %>%
-  broom::tidy() %>% 
-  mutate_at(vars(estimate1, estimate2), list(~exp(.)))
 
-
-tally %>%
-  as_tibble() %>%
-  group_by(grid_size) %>%
-  summarize(mean = mean(rate, na.rm = TRUE),
-            median = median(rate, na.rm = TRUE))
-
-# Calculate their relative ranking
-tally %>%
-  as_tibble() %>%
-  group_by(type) %>%
-  arrange(rate) %>%
-  mutate(rank = 1:n()) %>%
-  ungroup() %>%
-  pivot_wider(id_cols = c(cell_id), names_from = type, values_from = rank) %>%
-  summarize(cor = cor(`1_1`, `2_1`))
-tally %>%
-  as_tibble() %>%
-  pivot_wider(id_cols = c(cell_id), names_from = type, values_from = rate) %>%
-  summarize(cor = cor(`1_1`, `2_1`))
-```
-
-### Figure D2: Correlations by Grid
+### Figure A4: Correlations by Grid
 
 Are there any major demographic differences? Do they correlate as expected with covariates?
 
 ```{r, eval = FALSE}
-mycor <- read_rds("grid/compare_1_vs_2.rds") %>% 
+
+mycor <- read_sf("shapes/rates_by_collection_grids.geojson") %>%
+  filter(type %in% c("validation", "boston")) %>%
   as_tibble() %>%
   pivot_longer(cols = c(
-    pop_density, pop_women, pop_age_65_plus, 
+    pop_density_int, pop_women, pop_age_65_plus, 
     pop_black, pop_white, pop_asian, pop_hisplat,
     pop_some_college, median_income, 
     pop_unemployed, median_monthly_housing_cost, 
     social_capital:linking), names_to = "covariate", values_to = "x") %>%
-  group_by(type, covariate) %>%
+  group_by(size, covariate) %>%
   summarize(cor = cor(y, x, use = "pairwise.complete.obs")) %>%
   ungroup() %>%
   # Relabel terms
   mutate(covariate = covariate %>% recode_factor(
-    "pop_density" = "Pop\nDensity", 
+    "pop_density_int" = "Pop\nDensity", 
     "pop_women" = "% Women",
     "pop_age_65_plus" = "% Over\nAge 65",
     "pop_black" = "% Black", 
@@ -1740,13 +1924,13 @@ mycor <- read_rds("grid/compare_1_vs_2.rds") %>%
     "bridging" = "Bridging\nSocial Capital",
     "bonding" = "Bonding\nSocial Capital",
     "social_capital" = "Overall\nSocial Capital"),
-    type = type %>% recode_factor(
-      "1_1" = "1 km<sup>2</sup> Collection Grid<br>1 km<sup>1</sup> Tally Grid",
-      "2_1" = "2 km<sup>2</sup> Collection Grid<br>1 km<sup>1</sup> Tally Grid"))
+    size = size %>% recode_factor(
+      "1" = "1 km<sup>2</sup> Collection Grid<br>1 km<sup>1</sup> Tally Grid",
+      "2" = "2 km<sup>2</sup> Collection Grid<br>1 km<sup>1</sup> Tally Grid"))
 
 
 g1 <- mycor %>%
-  ggplot(mapping = aes(x = type, y = covariate, fill = cor, label = round(cor, 2))) +
+  ggplot(mapping = aes(x = size, y = covariate, fill = cor, label = round(cor, 2))) +
   geom_tile(color = "#373737", size = 0.1) +
   geom_text(size = 5) +
   scale_fill_gradient2(low = "#DC267F", high = "#648FFF", mid = "white", 
@@ -1772,18 +1956,313 @@ g1 <- mycor %>%
        subtitle = "Correlations between Logged Rates<br>of Places of Worship vs. Demographics",
        caption = "Note: Demographics represent averages of tract level covariates.")
 
-ggsave(g1, filename = "viz/figure_D2_robustness.png", width = 6, height = 6.5, dpi = 300)
+
+ggsave(g1, filename = "figures/figure_A4.png", width = 6, height = 6.5, dpi = 300)
 # Get a simple estimate of population density within a fishnet grid cells using the mean of the rate of tracts
 # Import tracts
 
 rm(list = ls())
 ```
 
-
-
-# 3. Sampling
+# 3. Tally
 
 Next, we uploaded our data to Google MyMaps, created a human coded map, and finally returned the data from that map to R, saving it in our ```validated``` folder.
+
+```{r}
+# Load projections
+meta <- dget("meta.txt")
+
+
+#Get MyMaps data
+read_sf("query/sites_validated.geojson") %>%
+  # Get Original Google Sites; 
+  filter(!is.na(place_id)) %>%
+  # Turns out, our point-grid joins are unaffected by projection given the scale we're at.
+  # so fine so join in WGS projection
+  st_join(read_sf("shapes/grid_covariates.geojson") %>% 
+  select(cell_id, milestone_id, type, geometry)) %>%
+  # to get study area, just filter to milestone_id %in% 1:3
+  # Save
+  st_write("shapes/mygoogle.geojson", delete_dsn = TRUE)
+# thus, shapes/mygoogle.geojson can double as the old mygoogle.kml and mygoogle_boston.kml
+
+read_sf("query/sites_points.geojson") %>%
+  head()
+
+read_sf("query/sites_validated.geojson")$group %>% table()
+  
+read_sf("query/sites_validated.geojson") 
+
+read_sf("query/sites_validated.geojson") 
+
+sum(s1$cell_id == s2$cell_id)
+
+```
+
+
+### Get Online-Checked Sites
+
+```{r, message = FALSE, warning = FALSE,  eval = FALSE}
+# Get projections
+meta <- dget("meta.txt")
+# Import grid!
+grid <- read_sf("shapes/grid_covariates.geojson") %>%
+  select(cell_id, neighborhood, milestone) %>%
+  # convert to equal area conic projection
+  st_transform(crs = meta$aea$proj)
+
+# Import grid cells sampled for ground truthing
+blocks <- read_sf("shapes/grid_sampled.geojson") %>%
+  filter(coders == "masters") %>%
+  # Transform to Equal Area conic projection
+  st_transform(crs = meta$aea$proj)
+```
+
+
+```{r}
+read_sf("query/sites_validated.geojson") %>%
+  group_by(status) %>%
+  count()
+
+read_sf("query/sites_validated.geojson") %>%
+  st_join(read_sf("shapes/grid_covariates.geojson") %>% 
+            select(cell_id, milestone_id, type, geometry)) %>%
+  filter(milestone_id %in% 1:4) %>%
+  as_tibble() %>%
+  group_by(status) %>%
+  count()
+
+sites <- read_sf("query/sites_validated.geojson") %>%
+  filter(is.na(status))
+
+grid <- read_sf("shapes/grid_covariates.geojson")
+
+boston <- read_sf("shapes/boston.geojson")
+
+ggplot() +
+  geom_sf(data = boston, fill = "white", color = "black") +
+  geom_sf(data = grid, fill = NA, color = "lightgrey") +
+  geom_sf(data = sites, color = "red")
+```
+```{r}
+read_sf("query/sites_validated.geojson") %>% head()
+
+# Import ground-truthed points
+myground <- read_rds("mygroundtruthed.rds")  %>%
+  mutate(source = "groundtruth_masters") %>%
+  select(name = title, type = group, status = groundtruth, cell_id, source, geometry)  %>%
+  mutate(x = st_coordinates(geometry)[,1],
+         y = st_coordinates(geometry)[,2])  %>%
+  as_tibble() %>%
+  select(-geometry)
+
+
+```
+
+```{r}
+  # st_write("query/sites_validated.geojson", delete_dsn = TRUE)
+  mutate(
+    status = case_when(
+    # Was in original google results
+    !is.na(place_id) & status == "checked" ~ "checked",
+    !is.na(place_id) & status == "checked, new" ~ "checked",
+    !is.na(place_id) & status == "checked, new, visited" ~ "checked, visited",
+    !is.na(place_id) & status == "checked, visited" ~ "checked, visited",
+    !is.na(place_id) & status == "visited" ~ "checked, visited",
+    
+    # Was not in original google results
+    is.na(place_id) & status == "checked" ~ "new",
+    is.na(place_id) & status == "checked, new" ~ "new",
+    is.na(place_id) & status == "checked, new, visited" ~ "new, visited",
+    is.na(place_id) & status == "new, visited" ~ "new, visited",
+    is.na(place_id) & status == "visited" ~ "new, visited",
+    
+    TRUE ~ status),
+  source = case_when(
+    str_detect(source, "googleapi") ~ "google_api",
+    TRUE ~ "humancoding_fall")) %>%
+```
+
+Next, let's get the final list of points that were checked.
+
+```{r}
+# Import online-checked points
+mychecked <- read_sf("mysites_all_boston.kml") %>%
+  select(-c(description, timestamp:icon)) %>%
+  # Filter out parking lots
+  mutate(source = "googlemymaps") %>%
+  select(name = Name, type = group, status, cell_id, 
+         google_id, source, geometry)  %>%
+
+
+#789 = have an id
+mychecked %>%
+  filter(!is.na(google_id)) %>%
+  count()
+
+# Import ground-truthed points
+myground <- read_rds("mygroundtruthed.rds")  %>%
+  mutate(source = "groundtruth_masters") %>%
+  select(name = title, type = group, status = groundtruth, cell_id, source, geometry)  %>%
+  mutate(x = st_coordinates(geometry)[,1],
+         y = st_coordinates(geometry)[,2])  %>%
+  as_tibble() %>%
+  select(-geometry)
+
+bind_rows(mygoogle, mychecked) %>%
+  mutate(x = st_coordinates(geometry)[,1],
+         y = st_coordinates(geometry)[,2]) %>%
+  as_tibble() %>%
+  select(-geometry) %>%
+  # Join in ground-truthed points
+  bind_rows(myground) %>%
+  # Round to nearest 30 feet
+  mutate(xish = round(x, 4), yish = round(y, 4)) %>%
+  # Group by name and general 30-feet area; there's not going to be 
+  # 2 caffe neros within the same 30 feet.
+  group_by(name, xish, yish) %>%
+  summarize(type = unique(type) %>% paste(collapse = ", "),
+            cell_id = unique(cell_id) %>% paste(collapse = ", "),
+            google_id = unique(google_id) %>% paste(collapse = ", "),
+            status = unique(status) %>% paste(collapse = ", "),
+            search = unique(search) %>% paste(collapse = ", "),
+            source = unique(source) %>% sort() %>% paste(collapse = ", "),
+            x = unique(x) %>% paste(collapse = ", "),
+            y  = unique(y) %>% paste(collapse = ", ")) %>%
+  ungroup() %>%
+  mutate(
+    google_id = str_remove(google_id, ", NA") %>% na_if("NA") %>% na_if(""),
+    search = str_remove(search, ", NA") %>% na_if("NA") %>% na_if(""),
+    type = case_when(
+      name == "Allan Crite Community Garden" ~ "Parks",
+      name == "Fenway Park" ~ "Parks",
+      name == "Garden of Peace" ~ "Parks",
+      name == "Iglesia Comunitaria Casa De Gloria" ~ "Places of Worship",
+      name == "Islamic Society of Boston Cultural Center" ~ "Places of Worship",
+      name == "St Leonard-Port Maurice Parish" ~ "Places of Worship",
+      TRUE ~ type),
+    status = case_when(
+      # Was in original google results
+      !is.na(google_id) & status == "checked" ~ "checked",
+      !is.na(google_id) & status == "checked, new" ~ "checked",
+      !is.na(google_id) & status == "checked, new, visited" ~ "checked, visited",
+      !is.na(google_id) & status == "checked, visited" ~ "checked, visited",
+      !is.na(google_id) & status == "visited" ~ "checked, visited",
+      
+      # Was not in original google results
+      is.na(google_id) & status == "checked" ~ "new",
+      is.na(google_id) & status == "checked, new" ~ "new",
+      is.na(google_id) & status == "checked, new, visited" ~ "new, visited",
+      is.na(google_id) & status == "new, visited" ~ "new, visited",
+      is.na(google_id) & status == "visited" ~ "new, visited",
+      
+      TRUE ~ status),
+    source = case_when(
+      str_detect(source, "googleapi") ~ "google_api",
+      TRUE ~ "humancoding_fall")) %>%
+  ungroup() %>%
+  select(-xish, -yish) %>%
+  # Finally, filters just to points within cells
+  filter(cell_id != "NA") %>%
+  # A couple of places accidentally got a bunch of coordinates of different lengths, even though they show the same place. Just pick the first.  
+    mutate_at(vars(x, y), list(~word(., 1) %>% str_remove(pattern = ",") %>% str_trim() %>% as.numeric())) %>%
+  # if it has a google_id, it's not new - that means it was retuned in the original query
+  mutate(status = if_else(!is.na(google_id) & status == "NA, new", 
+                          true = "checked", false = status)) %>%
+  st_as_sf(coords = c("x", "y"), crs = 4326)  %>%
+  # We're going to cut any places located outside of Boston
+  st_join(read_rds("neighborhoods.rds") %>% 
+            st_transform(crs = 4326) %>% 
+            select(neighborhood = name)) %>%
+  filter(!is.na(neighborhood)) %>%
+  mutate(
+    status = if_else(
+    condition = name %in% c(
+      "African Studies Library",
+      "Baker Square Condominiums",
+      "Boston City",
+      "Lofts At Lower Mills and Baker Square Condominums"), 
+    true = "not social infrastructure", false = status),
+    
+    status = if_else(
+      condition = name %in% c(
+        "Archdale Community Center", 
+        "Dorchester Park",
+        "Lower Mills Branch of the Boston Public Library",
+        "Flat Black Coffee",
+        "Wesley United Methodist Church",
+        "Ventura Park",
+        "Sweet Life",
+        "William G. Walsh Playground",
+        "Top of the Line Barbershop"),
+      true = "checked", false = status),
+    
+    status = if_else(
+      google_id %in% c(
+        "ChIJ3Wc0GUp744kRPWwNW7JpKSU",	
+        "ChIJqb2b43N844kR8prF3geo2os"),
+      true = "checked", false = status)) %>%
+  mutate(x = st_coordinates(.$geometry)[,1],
+         y = st_coordinates(.$geometry)[,2]) %>%
+  as_tibble() %>%
+  mutate(id = 1:n()) %>%
+  write_csv("export/boston_sites_2022_03_03.csv")
+```
+
+```{r}
+# Use boston neighborhood boundaries to exclude places on the other side of the River Charles
+
+read_csv("export/boston_sites_2022_03_03.csv") %>%
+  filter(!status %in% c("duplicated", "not found", "not social infrastructure")) %>%
+  write_csv("export/boston_social_infra_2022_03_03.csv")
+```
+
+
+## Next
+
+```{r}  
+  
+  # Filter to just places that are 'checked', 'new sites', or 'been there'
+  filter(status %in% c("checked", "new sites", "been there")) %>%
+  # add unique id for each point
+  mutate(id = 1:n()) %>%
+  # condense number of columsn
+  select(Name, description, id, group, status, google_id = place_id, geometry) %>%
+  # convert to equal area conic projection
+  st_transform(crs = aea) %>%
+  # Join in grid cells
+  st_join(grid) %>%
+  # Filter points to just those located within milestones 1, 2, and 3.
+  #filter(str_detect(milestone, pattern = "M1|M2|M3|M4")) %>%
+  select(Name, description, id, group, status, google_id, 
+         cell_id, neighborhood, milestone, geometry) %>%
+  mutate(milestone = na_if(milestone, "")) %>%
+  mutate(group = group %>% recode(
+    "community space" = "Community Spaces",
+    "place of worship" = "Places of Worship",
+    "park" = "Parks",
+    "social business" = "Social Businesses",
+    "other"= "Other")) %>%
+  write_sf("mysites_all_boston.kml", driver = "kml", delete_layer = TRUE)
+
+
+# Filter points to just those located within milestones 1, 2, and 3.
+read_sf("mysites_all_boston.kml") %>%
+  filter(str_detect(milestone, pattern = "M1|M2|M3")) %>%
+  write_sf("mysites_core_boston.kml", driver = "kml", delete_layer = TRUE)
+
+
+#read_sf("validated/sites.kml")$status %>% unique() %>% sort()
+#read_sf("sites.kml")$status %>% unique() %>% sort()
+```
+
+
+
+
+# 4. Validation
+
+
+
 
 ## 6.1 Import our data from Google MyMaps
 
@@ -2019,123 +2498,6 @@ remove(mine)
 
 # 4. Tallying
 
-### Get Online-Checked Sites
-
-```{r, message = FALSE, warning = FALSE,  eval = FALSE}
-# Get projections
-meta <- dget("meta.txt")
-# Import grid!
-grid <- read_sf("shapes/grid_covariates.geojson") %>%
-  select(cell_id, neighborhood, milestone) %>%
-  # convert to equal area conic projection
-  st_transform(crs = meta$aea$proj)
-
-# Import grid cells sampled for ground truthing
-blocks <- read_sf("shapes/grid_sampled.geojson") %>%
-  filter(coders == "masters") %>%
-  # Transform to Equal Area conic projection
-  st_transform(crs = meta$aea$proj)
-```
-
-
-```{r}
-read_sf("validated/sites.kml") %>%
-  # Get rid of fluff kml fields
-  select(-c(timestamp:icon)) %>%
-  # Zoom into just valid sites,
-  # excluding any sites we identified were not social infrastrucutre,
-  # which were not found, duplicated, or not yet verified ("")
-  mutate(status = status %>% tolower() %>% str_trim() %>% na_if("")) %>%
-  # update wording to new siteS, emphassis on s.
-  mutate(status = if_else(status == "new site", "new sites", status)) %>%
-  # Filter to just places that are 'checked', 'new sites', or 'been there'
-  filter(status %in% c("checked", "new sites", "been there")) %>%
-  # Clean initials of data coders
-  mutate(description = tolower(description) %>% 
-           na_if("") %>% str_trim() %>% recode(
-             "checked" = NA_character_,
-             "j" = "jz", "nc " = "nc")) %>%
-  mutate(group = group %>% tolower() %>% str_trim() %>% na_if("") %>%
-           recode(
-             "community space" = "community space", 
-             "community spaces" ="community space",
-             "social businesses" = "social business", 
-             "social business" = "social business",
-             "social busiesses" = "social business",
-             "parks" = "park",
-             "places of worship" = "place of worship",
-             "places of worhsip" = "place of worship",
-             "places of worsship" = "place of worship",
-             "places of worhip" = "place of worship",
-             .missing = "other")) %>%
-  # add unique id for each point
-  mutate(id = 1:n()) %>%
-  # condense number of columsn
-  select(Name, description, id, group, status, google_id = place_id, geometry) %>%
-  # convert to equal area conic projection
-  st_transform(crs = aea) %>%
-  # Join in grid cells
-  st_join(grid) %>%
-  # Filter points to just those located within milestones 1, 2, and 3.
-  #filter(str_detect(milestone, pattern = "M1|M2|M3|M4")) %>%
-  select(Name, description, id, group, status, google_id, 
-         cell_id, neighborhood, milestone, geometry) %>%
-  mutate(milestone = na_if(milestone, "")) %>%
-  mutate(group = group %>% recode(
-    "community space" = "Community Spaces",
-    "place of worship" = "Places of Worship",
-    "park" = "Parks",
-    "social business" = "Social Businesses",
-    "other"= "Other")) %>%
-  write_sf("mysites_all_boston.kml", driver = "kml", delete_layer = TRUE)
-
-
-# Filter points to just those located within milestones 1, 2, and 3.
-read_sf("mysites_all_boston.kml") %>%
-  filter(str_detect(milestone, pattern = "M1|M2|M3")) %>%
-  write_sf("mysites_core_boston.kml", driver = "kml", delete_layer = TRUE)
-
-
-#read_sf("validated/sites.kml")$status %>% unique() %>% sort()
-#read_sf("sites.kml")$status %>% unique() %>% sort()
-```
-
-
-
-
-## 3.2 Get Original Google Sites within Study Area (M1-M3)
-
-```{r}
-grid <- read_sf("grid_covariates_tracts.kml") %>%
-  select(-c(description, timestamp:icon)) %>%
-    # convert to equal area conic projection
-  st_transform(crs = aea) %>%
-  select(-Name) %>%
-  # Zoom into inner boston
-  filter(str_detect(milestone, "M1|M2|M3"))
-
-read_sf("validated/sites.kml") %>%
-  # Zoom into just our Google search results
-  mutate(place_id = place_id %>% na_if("")) %>%
-  filter(!is.na(place_id)) %>%
-  # convert to equal area conic projection
-  st_transform(crs = aea) %>%
-  # Join in grid cells
-  st_join(grid) %>%
-  # Zoom into just sites within the grid
-  filter(str_detect(milestone, "M1|M2|M3")) %>%
-  select(-c(timestamp:icon)) %>%
-  mutate(group = group %>% recode(
-    "community space" = "Community Spaces",
-    "Community Space" = "Community Spaces",
-    "place of worship" = "Places of Worship",
-    "park" = "Parks",
-    "social business" = "Social Businesses",
-    "other"= "Other",
-    "Not social infrastructure" = "Other")) %>%
-  
-  write_sf("mygoogle.kml", driver = "kml", delete_layer = TRUE)
-```
 
 Repeat, but this time get the sites for the entire Boston area.
 
@@ -2326,6 +2688,199 @@ read_csv("groundtruthedpoints_editing_final.csv") %>%
 
 
 
+# 5. Statistical Analysis
+
+```{r}
+
+grid <- read_rds("tally.rds") %>%
+  select(cell_id, group, sites = googled, pop_density = pop_density_int,
+         pop_women:pop_age_65_plus) %>%
+  mutate(sites = sites / pop_density * 1000) %>%
+  left_join(by = "cell_id", y = myvotes) %>%
+  filter(pop_density > 0)  
+
+
+mydat <- grid %>%
+  as.data.frame() %>%
+  select(-geometry) %>%
+   # Calculate sites per capita
+  mutate_at(vars(sites),
+            funs(. / pop_density * 1000)) %>%
+  #select(cell_id, group, year, social_capital:linking, 
+  #       googled:ground, pop_density) %>%
+  filter(!is.na(sites)) %>%
+  filter(group != "Other") %>%
+  # Impute small but reasonable value for zero cases,
+  # so we can log-transform them
+   ungroup() %>%
+  mutate(group = group %>% recode_factor(
+    "Total" = "Total", 
+    "Community Spaces" = "Community\nSpaces",
+    "Places of Worship" = "Places of\nWorship",
+    "Parks" = "Parks",
+    "Social Businesses" = "Social\nBusinesses", 
+    "Other" = "Other") %>%
+      factor(levels = levels(.)))
+```
+
+### Correlation
+
+```{r}
+mydat %>% 
+  filter(type != "(%) Voted Republican") %>%
+  group_by(type, group) %>%
+  summarize(cor = cor(percent, sites)) %>%
+  ggplot(mapping = aes(x = group, y = cor)) +
+  geom_col() +
+  facet_grid(cols = vars(type))
+```
+
+### Model
+
+```{r}
+mytheme <- theme(
+    panel.grid = element_blank(),
+    panel.border = element_blank(),
+    legend.position = "bottom",
+    strip.text.x = element_text(color = "white"),
+        plot.title = element_markdown(size = 14, hjust = 0.5),
+        plot.subtitle = element_markdown(size = 14, hjust = 0.5),
+        axis.text.x = element_markdown(size = 10, hjust = 0.5),
+                plot.caption = element_markdown(size = 10, hjust = 0))
+```
+```{r}
+myvif <- mydat %>%
+  mutate(pop_nonwhite = 1 - pop_white) %>%
+  mutate(type = paste(group, type, sep = " split ")) %>%
+  split(.$type) %>%
+  map_dfr(~lm(formula = percent ~ sites + 
+                income_inequality +
+                median_income + 
+                pop_nonwhite + pop_some_college +
+                pop_density, data = .) %>%
+            car::vif() %>%
+            max() %>%
+            data.frame(vif = .),
+          .id = "type") %>%
+  separate(col = type, sep = " split ",
+           into = c("group", "type"))
+# myvif
+# Pretty solid! ~4.5
+
+mysum <- mydat %>%
+  mutate(pop_nonwhite = 1 - pop_white) %>%
+  mutate_at(vars(percent, sites, income_inequality,
+                 median_income, pop_nonwhite, pop_some_college,
+                 pop_density), funs(scale(.) %>% as.numeric())) %>%
+  mutate(type = paste(group, type, sep = " split ")) %>%
+  split(.$type) %>%
+  map_dfr(~lm(formula = percent ~ sites + 
+                income_inequality +
+                median_income + 
+                pop_nonwhite + pop_some_college +
+                pop_density, data = .) %>%
+              moderndive::get_regression_summaries(),
+          .id = "type") %>%
+  separate(col = type, sep = " split ",
+           into = c("group", "type"))
+
+
+
+mystats <- mydat %>%
+  mutate(pop_nonwhite = 1 - pop_white) %>%
+    mutate_at(vars(percent, sites, income_inequality,
+                 median_income, pop_nonwhite, pop_some_college,
+                 pop_density), funs(scale(.) %>% as.numeric())) %>%
+
+  mutate(type = paste(group, type, sep = " split ")) %>%
+  split(.$type) %>%
+  map_dfr(~lm(formula = percent ~ sites + 
+                income_inequality +
+                median_income + 
+                pop_nonwhite + pop_some_college +
+                pop_density, data = .) %>%
+              moderndive::get_regression_table(),
+          .id = "type") %>%
+  separate(col = type, sep = " split ",
+           into = c("group", "type")) %>%
+    filter(term == "sites") %>%
+  filter(type != "(%) Voted Republican") %>%
+  mutate(label = paste(
+    round(estimate, 4) %>% format(scientific = FALSE),
+    gtools::stars.pval(p_value), sep = ""))
+
+g1 <- mystats %>% 
+  mutate(group = factor(group, levels = c(
+    "Total", "Community\nSpaces", "Places of\nWorship", 
+    "Social\nBusinesses", "Parks") %>% rev())) %>%
+  ggplot(mapping = aes(x = group, y = estimate, 
+                       ymin = lower_ci, ymax = upper_ci,
+                       fill = if_else(estimate > 0, "Positive", "Negative"),
+                       label = label)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey") +
+  geom_col(width = 0.5) +
+  geom_linerange() +
+  geom_point() +
+  geom_text(nudge_x = 0.4) +
+  facet_grid(cols = vars(type),
+             scales = "free") +
+  coord_flip() +
+  scale_fill_manual(values = c("#DC267F", "#648FFF")) +
+  theme_bw(base_size = 14) +
+  #scale_y_continuous(labels = function(x) format(x, scientific = TRUE)) +
+  mytheme +
+  theme(panel.spacing.x = unit(0.5, "cm"),
+        plot.subtitle = ggtext::element_markdown(size = 15),
+        panel.border = element_rect(color = "grey", fill = NA)) +
+  labs(
+    subtitle = "Association between Social Infrastructure and Voting",
+    y = "Standardized Effect of Site Rates (Z-score) on Voting Outcomes (Z-score)\n(Standardized Beta Coefficients with 95% Confidence Intervals)",
+    fill = "Direction of Effect (Beta)",
+    x = "Type of Social Infrastructure")
+
+# Write a quick function to adjust headers
+scale_panel_fill = function(myplot, side = "t", fill){
+  g <- ggplot_gtable(ggplot_build(myplot))
+  strip_r <- which(grepl(paste('strip-', side, sep = ""), g$layout$name))
+  fills <- fill
+  
+  k <- 1
+  for (i in strip_r) {
+    j <- which(grepl('rect', g$grobs[[i]]$grobs[[1]]$childrenOrder))
+    g$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
+    k <- k+1
+  }
+  
+  as_ggplot(g) %>%
+    return()
+}
+
+combo <- g1 %>%
+  scale_panel_fill(side = "t", 
+                   fill = c("#0D0887", 
+                            "#D35171")) +
+  ggpubr::bgcolor(color = "white") +
+  ggpubr::border(color = "white")
+
+ggsave(combo, filename = "viz/figure_C2.png", dpi = 500, width = 12, height = 5)
+
+
+combo2 <- g1 + 
+labs(caption = "<b>Models: </b>Generated from OLS Models, which predict Percentage Voted (or Voted Democrat) using
+    the Rate of Social Infrastructure (shown above), Median Income,<br>% Some College, 
+    Income Inequality (Gini Coefficient), % Non-White Population, and Population Density.<br>All models explained between 43-86% of variation in outcome. 
+    <b>Colinearity</b>: VIF below 10 for Google Sites (n = 71, Max = 4.5)
+    <br>
+    <b>Standardized Effects</b>: All numeric variables were rescaled into Z-scores so that beta coefficients reflect the projected increase in Voting Outcomes in standard deviations<br>as the rate of Social Infrastructure increases by 1 standard deviation.
+    <b>Statistical Significance</b>: *** p < 0.001; ** p < 0.01; * p < 0.05; . p < 0.10.") %>%
+  scale_panel_fill(side = "t", 
+                   fill = c("#0D0887", 
+                            "#D35171")) +
+  ggpubr::bgcolor(color = "white") +
+  ggpubr::border(color = "white")
+
+ggsave(combo2, filename = "covariates/beta_vote.png", dpi = 500, width = 12, height = 6)
+```
 
 
 

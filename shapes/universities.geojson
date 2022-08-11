@@ -1,0 +1,21 @@
+{
+"type": "FeatureCollection",
+"name": "universities",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "id": "168005", "name": "Suffolk University", "area": "Boston" }, "geometry": { "type": "Point", "coordinates": [ -71.061948698150374, 42.358913524304164 ] } },
+{ "type": "Feature", "properties": { "id": "165112", "name": "Bunker Hill Community College", "area": "Charlestown" }, "geometry": { "type": "Point", "coordinates": [ -71.069572252951801, 42.375125225538639 ] } },
+{ "type": "Feature", "properties": { "id": "165671", "name": "Emmanuel College", "area": "Fenway\/Kenmore" }, "geometry": { "type": "Point", "coordinates": [ -71.103478557896835, 42.341525002428327 ] } },
+{ "type": "Feature", "properties": { "id": "167783", "name": "Simmons", "area": "Fenway\/Kenmore" }, "geometry": { "type": "Point", "coordinates": [ -71.099940508423359, 42.339195998926627 ] } },
+{ "type": "Feature", "properties": { "id": "164988", "name": "Boston University", "area": "Fenway\/Kenmore" }, "geometry": { "type": "Point", "coordinates": [ -71.099709914712577, 42.349568428175509 ] } },
+{ "type": "Feature", "properties": { "id": "167631", "name": "Roxbury Community College", "area": "Roxbury" }, "geometry": { "type": "Point", "coordinates": [ -71.095495020583058, 42.329244016682146 ] } },
+{ "type": "Feature", "properties": { "id": "166638", "name": "University of Massachusetts-Boston", "area": "North Dorchester" }, "geometry": { "type": "Point", "coordinates": [ -71.039202741604427, 42.313818022539337 ] } },
+{ "type": "Feature", "properties": { "id": "164924", "name": "Boston College", "area": "Chestnut Hill" }, "geometry": { "type": "Point", "coordinates": [ -71.169719880258455, 42.333841307850186 ] } },
+{ "type": "Feature", "properties": { "id": "165662", "name": "Emerson College", "area": "Beacon Hill" }, "geometry": { "type": "Point", "coordinates": [ -71.065736373044444, 42.352228054813871 ] } },
+{ "type": "Feature", "properties": { "id": "166674", "name": "Massachusetts College of Art and Design", "area": "Fenway\/Kenmore" }, "geometry": { "type": "Point", "coordinates": [ -71.100341025858469, 42.336392407523547 ] } },
+{ "type": "Feature", "properties": { "id": "166656", "name": "MCPHS University", "area": "Fenway\/Kenmore" }, "geometry": { "type": "Point", "coordinates": [ -71.101120603885903, 42.336888668119528 ] } },
+{ "type": "Feature", "properties": { "id": "167358", "name": "Northeastern University", "area": "Fenway\/Kenmore" }, "geometry": { "type": "Point", "coordinates": [ -71.088892192197036, 42.340056572071887 ] } },
+{ "type": "Feature", "properties": { "id": "168227", "name": "Wentworth Institute of Technology", "area": "Fenway\/Kenmore" }, "geometry": { "type": "Point", "coordinates": [ -71.094940600484179, 42.336628668120781 ] } },
+{ "type": "Feature", "properties": { "id": "164748", "name": "Berklee College of Music", "area": "Fenway\/Kenmore" }, "geometry": { "type": "Point", "coordinates": [ -71.089011808830136, 42.346697711506195 ] } }
+]
+}

@@ -2676,19 +2676,32 @@ generate = function(tally){
     return()
 }
 
-visualize = function(g){
+visualize = function(g, jitter = FALSE){
   #install.packages("devtools")
   #devtools::install_github("teunbrand/ggh4x")
   library(ggh4x)
   
-  ggplot() +
+  if(jitter == TRUE){
+  ggviz <- ggplot() +
+    # Put jittered points
+    geom_jitter(data = g$mypoints,
+               mapping = aes(x = x, y = y, fill = type, group = group),
+               shape = 21, color = "white", size = 3)
+  
+  }else{
+    
+  ggviz <- ggplot() +
     # Put lines from yhat to y
     geom_linerange(data = g$mypoints, mapping = aes(x = x, ymin = y, ymax = y_hat), color = "grey", size = 0.6, alpha = 0.75) +
     
     # Put raw points
     geom_point(data = g$mypoints,
                mapping = aes(x = x, y = y, fill = type, group = group),
-               shape = 21, color = "white", size = 3) +
+               shape = 21, color = "white", size = 3)
+    
+  }
+  
+  ggviz +
     # Get lines
     geom_line(data = g$mybands, 
               mapping = aes(x = x, y = yhat, group = group), color = "black", linetype = "dashed", size = 1) +
@@ -2813,7 +2826,7 @@ g3 <- tally %>%
             # By decile
             funs(ntile(., 10))) %>%
   ungroup() %>%
-  generate() %>% visualize() +
+  generate() %>% visualize(jitter = TRUE) +
   labs(subtitle = "Cells Ranked by Decile (1 = Lowest, 10 = Highest)")
 
 # Save to file!
@@ -2830,7 +2843,7 @@ g4 <- tally %>%
             # By quintile
             funs(ntile(., 5))) %>%
   ungroup() %>%
-  generate() %>% visualize() +
+  generate() %>% visualize(jitter = TRUE) +
   labs(subtitle = "Cells Ranked by Quintile (1 = Lowest, 5 = Highest)")
 
 # Save to file!

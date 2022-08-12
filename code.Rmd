@@ -1796,8 +1796,12 @@ fish <- read_sf("shapes/grid_covariates.geojson") %>%
   # Filter to cells within boston
   filter(zone != "outside_of_boston")
 
+
 # Load in the raw points
-mypoints <- read_sf("query/sites_points.geojson") %>% select(-cell_id)
+mypoints <- read_sf("query/sites_points.geojson") %>% select(-cell_id) %>%
+  # keep ONLY points located squarely within Boston
+  st_join(read_sf("shapes/boston.geojson") %>% select(geometry), left = FALSE)
+
 
 # How many points per cell would we expect if things were distributed equally?
 taba1 <- fish %>%
@@ -2032,7 +2036,7 @@ library(kableExtra)
 library(viridis)
 
 # Load data
-dat <- read_csv("data/figure_rates.csv") %>%
+tab <- read_csv("data/figure_rates.csv") %>%
   filter(figure == 0) %>%
   # omit the summed groups, so we can look at their subindicators
   filter(!type %in% c("sites", "parks", "social", "community", "rec")) %>%
@@ -2135,7 +2139,7 @@ dat <- read_csv("data/figure_rates.csv") %>%
   mutate(Sites = as.numeric(Sites))
 
 # Take a peek at the raw data!
-dat
+tab
 ```
 
 To build our table in LaTeX, use the output from the following function.
@@ -2207,14 +2211,18 @@ meta <- dget("meta.txt")
 source("helper/mapdata.r")
 
 # Grab the 1-square kilometer fishnet grid
-fish <- grid %>%
-  filter(zone %in% c("validation", "excluded_validation", "boston", "excluded_boston"))
-  
-mypoints <- read_csv("query/sites_validated.csv") %>%
-  st_as_sf(coords = c("x", "y"), crs = 4326) %>%
-  st_transform(crs = meta$aea$proj)  %>%
-  # Zoom into just Google API Results
-  filter(!is.na(google_id)) %>%
+fish <- read_sf("shapes/grid_covariates.geojson") %>%
+  st_transform(crs = meta$aea$proj) %>%
+  # Filter to cells within boston
+  filter(zone != "outside_of_boston")
+
+
+# Load in the raw points
+mypoints <- read_sf("query/sites_points.geojson") %>% select(-cell_id) %>%
+  # keep ONLY points located squarely within Boston
+  st_join(read_sf("shapes/boston.geojson") %>% select(geometry), left = FALSE) %>%
+  st_transform(crs = meta$aea$proj) %>%
+  rename(type = group) %>%
   # Zoom into main types
   filter(type != "Other") %>%
   # Keep just points in study region
@@ -2223,11 +2231,18 @@ mypoints <- read_csv("query/sites_validated.csv") %>%
   group_by(type) %>%
   mutate(ncells = n()) %>%
   mutate(type = type %>% recode_factor(
-  "Community Spaces" =   "Community Spaces<br>(n = 192)",
-  "Places of Worship" = "Places of Worship<br>(n = 206)",
-  "Social Businesses" = "Social Businesses<br>(n = 197)",
-  "Parks" = "Parks<br>(n = 433)")) %>%
+  "Community Space" =   "Community Spaces<br>(n = 189)",
+  "Places of Worship" = "Places of Worship<br>(n = 208)",
+  "Social Businesses" = "Social Businesses<br>(n = 195)",
+  "Parks" = "Parks<br>(n = 451)")) %>%
   ungroup()
+
+# How many are in study zone?
+#mypoints %>% 
+#  as_tibble() %>%
+#  select(zone) %>%
+#  .$zone %>% table()
+  
 
 # Let's import a little airport image to make 
 # it really clear why we don't map that area
@@ -4123,7 +4138,7 @@ g1 <- mysample %>%
   theme(plot.caption = ggtext::element_markdown(size = 12, hjust = 0),
         plot.subtitle = element_text(hjust = 0.5)) +
   labs(color = NULL, linetype = NULL,
-       y = "Traits of Grid Cells,   \naveraged from Census Tracts", x = NULL,
+       y = "Traits of Cells,   \naveraged from Census Tracts", x = NULL,
        subtitle = "Representativeness in Validation Samples\nSample Mean vs. Population Mean (95% Sample Confidence Intervals)")
 
 # Save!
@@ -4506,6 +4521,7 @@ rm(list = ls())
 ```
 <br>
 <br>
+
 
 ## Statistical Analysis
 
@@ -5093,6 +5109,7 @@ Recently, several communities have tried to estimate the average size of a commu
 
 <br>
 <br>
+
 
 ## Sample Code for Multi-Round Queries
 

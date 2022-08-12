@@ -16,7 +16,7 @@ Below, we briefly outline the structure of this repository.
 
 - `code.Rmd`: replication file for study, with code written in RMarkdown. Produces all tables and visuals in the study.
 
-- `code.html`: For a user-friendly version of `code.Rmd`, see our tutorial, which is an HTML-rendered version of the `code.Rmd` file.
+- `code.html`: For a user-friendly version of `code.Rmd`, see our [tutorial](https://timothyfraser.github.io/trust_but_verify/code), which is an HTML-rendered version of the `code.Rmd` file.
 
 - `keys.R`: A simple short script that sets API keys, tokens, and passwords to the `R` environment. This is specific to each user (you'll need your own). But, we provide a sample code in the `code.Rmd` file to show you how to make your own `keys.R` file.
 

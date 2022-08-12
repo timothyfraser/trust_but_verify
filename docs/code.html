@@ -7,7 +7,7 @@
 
         <meta name="author" content="Code by Timothy Fraser" />
     
-        <meta name="date" content="2022-08-11" />
+        <meta name="date" content="2022-08-12" />
     
     <title>Replication Code</title>
 
@@ -1635,7 +1635,7 @@ Validating New Measures for Mapping Social Infrastructure in Cities</h1>
            <span class="glyphicon glyphicon-user"></span> Code by
 Timothy Fraser
       </p>
-         <p class="date"><span class="glyphicon glyphicon-calendar"></span> 2022-08-11</p>
+         <p class="date"><span class="glyphicon glyphicon-calendar"></span> 2022-08-12</p>
            
 
    
@@ -3486,8 +3486,12 @@ fish &lt;- read_sf(&quot;shapes/grid_covariates.geojson&quot;) %&gt;%
   # Filter to cells within boston
   filter(zone != &quot;outside_of_boston&quot;)
 
+
 # Load in the raw points
-mypoints &lt;- read_sf(&quot;query/sites_points.geojson&quot;) %&gt;% select(-cell_id)
+mypoints &lt;- read_sf(&quot;query/sites_points.geojson&quot;) %&gt;% select(-cell_id) %&gt;%
+  # keep ONLY points located squarely within Boston
+  st_join(read_sf(&quot;shapes/boston.geojson&quot;) %&gt;% select(geometry), left = FALSE)
+
 
 # How many points per cell would we expect if things were distributed equally?
 taba1 &lt;- fish %&gt;%
@@ -3684,11 +3688,11 @@ tab</code></pre>
 <pre><code>## # A tibble: 5 × 12
 ##   ` `   Type       Sites  Mean Std. …¹   Min 25th …² 50th …³ 75th …⁴   Max Total
 ##   &lt;chr&gt; &lt;chr&gt;      &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;
-## 1 &quot;&quot;    Total Sit…  1220   0.9     1.2     0     0.1     0.7     1.3   9.9 200. 
-## 2 &quot;&quot;    Community…   227   0.2     0.4     0     0       0       0.2   3.2  34  
-## 3 &quot;&quot;    Places of…   225   0.2     0.3     0     0       0       0.3   1.9  36  
-## 4 &quot;&quot;    Social Bu…   230   0.2     0.4     0     0       0       0.3   2.8  43.1
-## 5 &quot;&quot;    Parks        538   0.4     0.6     0     0       0.3     0.6   5.3  87.4
+## 1 &quot;&quot;    Total Sit…  1043   0.7     1       0       0     0.4     1.2   7.3 163  
+## 2 &quot;&quot;    Community…   189   0.1     0.3     0       0     0       0.2   3.2  26.3
+## 3 &quot;&quot;    Places of…   208   0.1     0.3     0       0     0       0.2   1.9  32.7
+## 4 &quot;&quot;    Social Bu…   195   0.2     0.4     0       0     0       0.2   2.8  35.2
+## 5 &quot;&quot;    Parks        451   0.3     0.5     0       0     0.2     0.4   3.1  68.8
 ## # … with 1 more variable: `Cells with Sites` &lt;dbl&gt;, and abbreviated variable
 ## #   names ¹​`Std. Dev.`, ²​`25th %`, ³​`50th %`, ⁴​`75th %`
 ## # ℹ Use `colnames()` to see all variable names</code></pre>
@@ -3724,7 +3728,7 @@ library(kableExtra)
 library(viridis)
 
 # Load data
-dat &lt;- read_csv(&quot;data/figure_rates.csv&quot;) %&gt;%
+tab &lt;- read_csv(&quot;data/figure_rates.csv&quot;) %&gt;%
   filter(figure == 0) %&gt;%
   # omit the summed groups, so we can look at their subindicators
   filter(!type %in% c(&quot;sites&quot;, &quot;parks&quot;, &quot;social&quot;, &quot;community&quot;, &quot;rec&quot;)) %&gt;%
@@ -3827,29 +3831,29 @@ dat &lt;- read_csv(&quot;data/figure_rates.csv&quot;) %&gt;%
   mutate(Sites = as.numeric(Sites))
 
 # Take a peek at the raw data!
-dat</code></pre>
+tab</code></pre>
 <pre><code>## # A tibble: 19 × 14
 ##    group ` `   Type  Sites  Mean    SD   Min `25%` `50%` `75%`   Max Total Cells
 ##    &lt;fct&gt; &lt;chr&gt; &lt;chr&gt; &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt; &lt;dbl&gt;
-##  1 Comm… &quot;&quot;    Libr…   110   0.1   0.2     0     0   0     0.1   1.9  16.2    55
-##  2 Comm… &quot;&quot;    City…    43   0     0.2     0     0   0     0     2.3   6.9    14
-##  3 Comm… &quot;&quot;    Comm…    74   0     0.1     0     0   0     0     0.5  10.9    50
-##  4 Plac… &quot;&quot;    Plac…   225   0.2   0.3     0     0   0     0.3   1.9  36      83
-##  5 Soci… &quot;&quot;    Book…    67   0     0.2     0     0   0     0     1.7  10.1    31
-##  6 Soci… &quot;&quot;    Cafes   163   0.2   0.3     0     0   0     0.2   2.8  33      66
-##  7 Soci… &quot;&quot;    Coff…     0   0     0       0     0   0     0     0     0       0
-##  8 Soci… &quot;&quot;    Barb…     0   0     0       0     0   0     0     0     0       0
-##  9 Soci… &quot;&quot;    Beau…     0   0     0       0     0   0     0     0     0       0
-## 10 Parks &quot;&quot;    Parks   292   0.2   0.3     0     0   0.2   0.4   1.6  51.1   123
-## 11 Parks &quot;&quot;    Foun…    34   0     0.1     0     0   0     0     0.9   4.8    16
-## 12 Parks &quot;&quot;    Squa…   200   0.1   0.4     0     0   0     0.1   4.6  30      63
-## 13 Parks &quot;&quot;    Gard…    12   0     0       0     0   0     0     0.3   1.5     7
-## 14 Parks &quot;&quot;    Recr…     0   0     0       0     0   0     0     0     0       0
-## 15 Parks &quot;&quot;    Spor…     0   0     0       0     0   0     0     0     0       0
-## 16 Other &quot;&quot;    Aqua…     0   0     0       0     0   0     0     0     0       0
-## 17 Other &quot;&quot;    Art …     0   0     0       0     0   0     0     0     0       0
-## 18 Other &quot;&quot;    Muse…     1   0     0       0     0   0     0     0.2   0.2     1
-## 19 Other &quot;&quot;    Zoo       0   0     0       0     0   0     0     0     0       0
+##  1 Comm… &quot;&quot;    Libr…    85   0.1   0.1     0     0     0   0     1.1  11.2    44
+##  2 Comm… &quot;&quot;    City…    32   0     0.1     0     0     0   0     1.9   4.6    13
+##  3 Comm… &quot;&quot;    Comm…    72   0     0.1     0     0     0   0     0.5  10.5    49
+##  4 Plac… &quot;&quot;    Plac…   208   0.1   0.3     0     0     0   0.2   1.9  32.7    76
+##  5 Soci… &quot;&quot;    Book…    52   0     0.1     0     0     0   0     0.9   6.9    24
+##  6 Soci… &quot;&quot;    Cafes   143   0.1   0.3     0     0     0   0.1   2.8  28.4    58
+##  7 Soci… &quot;&quot;    Coff…     0   0     0       0     0     0   0     0     0       0
+##  8 Soci… &quot;&quot;    Barb…     0   0     0       0     0     0   0     0     0       0
+##  9 Soci… &quot;&quot;    Beau…     0   0     0       0     0     0   0     0     0       0
+## 10 Parks &quot;&quot;    Parks   236   0.2   0.2     0     0     0   0.3   1.4  39.6   103
+## 11 Parks &quot;&quot;    Foun…    28   0     0.1     0     0     0   0     0.9   3.2    12
+## 12 Parks &quot;&quot;    Squa…   175   0.1   0.3     0     0     0   0.1   2.7  24.4    58
+## 13 Parks &quot;&quot;    Gard…    12   0     0       0     0     0   0     0.3   1.5     7
+## 14 Parks &quot;&quot;    Recr…     0   0     0       0     0     0   0     0     0       0
+## 15 Parks &quot;&quot;    Spor…     0   0     0       0     0     0   0     0     0       0
+## 16 Other &quot;&quot;    Aqua…     0   0     0       0     0     0   0     0     0       0
+## 17 Other &quot;&quot;    Art …     0   0     0       0     0     0   0     0     0       0
+## 18 Other &quot;&quot;    Muse…     0   0     0       0     0     0   0     0     0       0
+## 19 Other &quot;&quot;    Zoo       0   0     0       0     0     0   0     0     0       0
 ## # … with 1 more variable: image &lt;fct&gt;
 ## # ℹ Use `colnames()` to see all variable names</code></pre>
 <p>To build our table in LaTeX, use the output from the following
@@ -3916,14 +3920,18 @@ meta &lt;- dget(&quot;meta.txt&quot;)
 source(&quot;helper/mapdata.r&quot;)
 
 # Grab the 1-square kilometer fishnet grid
-fish &lt;- grid %&gt;%
-  filter(zone %in% c(&quot;validation&quot;, &quot;excluded_validation&quot;, &quot;boston&quot;, &quot;excluded_boston&quot;))
-  
-mypoints &lt;- read_csv(&quot;query/sites_validated.csv&quot;) %&gt;%
-  st_as_sf(coords = c(&quot;x&quot;, &quot;y&quot;), crs = 4326) %&gt;%
-  st_transform(crs = meta$aea$proj)  %&gt;%
-  # Zoom into just Google API Results
-  filter(!is.na(google_id)) %&gt;%
+fish &lt;- read_sf(&quot;shapes/grid_covariates.geojson&quot;) %&gt;%
+  st_transform(crs = meta$aea$proj) %&gt;%
+  # Filter to cells within boston
+  filter(zone != &quot;outside_of_boston&quot;)
+
+
+# Load in the raw points
+mypoints &lt;- read_sf(&quot;query/sites_points.geojson&quot;) %&gt;% select(-cell_id) %&gt;%
+  # keep ONLY points located squarely within Boston
+  st_join(read_sf(&quot;shapes/boston.geojson&quot;) %&gt;% select(geometry), left = FALSE) %&gt;%
+  st_transform(crs = meta$aea$proj) %&gt;%
+  rename(type = group) %&gt;%
   # Zoom into main types
   filter(type != &quot;Other&quot;) %&gt;%
   # Keep just points in study region
@@ -3932,11 +3940,18 @@ mypoints &lt;- read_csv(&quot;query/sites_validated.csv&quot;) %&gt;%
   group_by(type) %&gt;%
   mutate(ncells = n()) %&gt;%
   mutate(type = type %&gt;% recode_factor(
-  &quot;Community Spaces&quot; =   &quot;Community Spaces&lt;br&gt;(n = 192)&quot;,
-  &quot;Places of Worship&quot; = &quot;Places of Worship&lt;br&gt;(n = 206)&quot;,
-  &quot;Social Businesses&quot; = &quot;Social Businesses&lt;br&gt;(n = 197)&quot;,
-  &quot;Parks&quot; = &quot;Parks&lt;br&gt;(n = 433)&quot;)) %&gt;%
+  &quot;Community Space&quot; =   &quot;Community Spaces&lt;br&gt;(n = 189)&quot;,
+  &quot;Places of Worship&quot; = &quot;Places of Worship&lt;br&gt;(n = 208)&quot;,
+  &quot;Social Businesses&quot; = &quot;Social Businesses&lt;br&gt;(n = 195)&quot;,
+  &quot;Parks&quot; = &quot;Parks&lt;br&gt;(n = 451)&quot;)) %&gt;%
   ungroup()
+
+# How many are in study zone?
+#mypoints %&gt;% 
+#  as_tibble() %&gt;%
+#  select(zone) %&gt;%
+#  .$zone %&gt;% table()
+  
 
 # Let&#39;s import a little airport image to make 
 # it really clear why we don&#39;t map that area
@@ -5816,7 +5831,7 @@ g1 &lt;- mysample %&gt;%
   theme(plot.caption = ggtext::element_markdown(size = 12, hjust = 0),
         plot.subtitle = element_text(hjust = 0.5)) +
   labs(color = NULL, linetype = NULL,
-       y = &quot;Traits of Grid Cells,   \naveraged from Census Tracts&quot;, x = NULL,
+       y = &quot;Traits of Cells,   \naveraged from Census Tracts&quot;, x = NULL,
        subtitle = &quot;Representativeness in Validation Samples\nSample Mean vs. Population Mean (95% Sample Confidence Intervals)&quot;)
 
 # Save!
